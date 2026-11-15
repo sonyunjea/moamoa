@@ -70,6 +70,14 @@
     ];
 
     const CATEGORIES = ['사회복지', '지역개발·교통', '환경·보건', '교육·문화', '산업·일자리', '일반공공행정'];
+    const CATEGORY_COLORS = {
+        '사회복지': '#2563eb',
+        '지역개발·교통': '#d97706',
+        '환경·보건': '#059669',
+        '교육·문화': '#7c3aed',
+        '산업·일자리': '#e11d48',
+        '일반공공행정': '#475569'
+    };
     const VENDORS = [
         '농협중앙회', '국민은행', '신한은행', '한국전력공사', '한국수자원공사',
         '(주)한화건설', '현대엔지니어링', '대우건설', 'GS건설', '포스코이앤씨',
@@ -126,49 +134,7 @@
 
         for (let i = 0; i < itemCount; i++) {
             const cat = CATEGORIES[(seedNum + year + i) % CATEGORIES.length];
-            const templates = PROJECT_TEMPLATES[cat];
-            const title = templates[(i + year) % templates.length];
-            const vendor = VENDORS[(seedNum * 3 + i + year) % VENDORS.length];
-
-            const month = String(((i * 3 + year) % 12) + 1).padStart(2, '0');
-            const day = String(((i * 7 + seedNum) % 28) + 1).padStart(2, '0');
-
-            let amountManWon;
-            if (i === itemCount - 1) {
-                amountManWon = Math.max(1200, remainingExecutedManWon);
-            } else {
-                const weight = ((i % 5) + 1) / (itemCount * 2.6);
-                amountManWon = Math.max(1500, Math.round(totalExecuted * 10000 * weight));
-                remainingExecutedManWon = Math.max(1200, remainingExecutedManWon - amountManWon);
-            }
-
-            items.push({
-                id: `${year}-${region.id}-${String(i + 1).padStart(4, '0')}`,
-                year,
-                regionId: region.id,
-                regionName: region.name,
-                regionShort: region.shortName,
-                category: cat,
-                projectName: `[${year}] ${region.shortName} ${title}`,
-                vendor,
-                amountManWon,
-                date: `${year}-${month}-${day}`
-            });
-        }
-
-        return {
-            regionId: region.id,
-            regionName: region.name,
-            regionShort: region.shortName,
-            year,
-            totalBudget,
-            totalExecuted,
-            execRate: Math.round(execRate * 1000) / 10,
-            items
-        };
-    }
-
-    // 2014 ~ 현재연도 전체 데이터 사전 생성 (2026년부터는 광주전남특별시 기준 생성)
+        // 2014 ~ 현재연도 전체 데이터 사전 생성 (2026년부터는 광주전남특별시 기준 생성)
     const ALL_YEARS_DATA = {};
     YEARS.forEach(yr => {
         ALL_YEARS_DATA[yr] = {};
@@ -176,6 +142,48 @@
             ALL_YEARS_DATA[yr][region.id] = generateRegionYearData(region, yr);
         });
     });
+
+    // 특정 연도·지역(또는 전국)의 행정분야별 지출 합계 및 핵심 사업 요약 계산
+    function getCategoryBreakdown(year, regionId) {
+        const statsMap = ALL_YEARS_DATA[year];
+        const activeRegions = getRegionsForYear(year);
+        let targetItems = [];
+
+        if (regionId === 'ALL') {
+            activeRegions.forEach(r => {
+                if (statsMap[r.id]) targetItems.push(...statsMap[r.id].items);
+            });
+        } else if (statsMap[regionId]) {
+            targetItems = statsMap[regionId].items;
+        }
+
+        const totalManWon = targetItems.reduce((acc, cur) => acc + cur.amountManWon, 0);
+        const byCat = CATEGORIES.map(cat => {
+            const catItems = targetItems.filter(it => it.category === cat);
+            const sumManWon = catItems.reduce((acc, cur) => acc + cur.amountManWon, 0);
+            const eok = Math.round((sumManWon / 10000) * 10) / 10;
+            const share = totalManWon > 0 ? Math.round((sumManWon / totalManWon) * 1000) / 10 : 0;
+            return {
+                category: cat,
+                color: CATEGORY_COLORS[cat] || '#334155',
+                sumManWon,
+                eok,
+                share,
+                count: catItems.length
+            };
+        }).sort((a, b) => b.sumManWon - a.sumManWon);
+
+        const topProjects = [...targetItems]
+            .sort((a, b) => b.amountManWon - a.amountManWon)
+            .slice(0, 3);
+
+        return {
+            totalManWon,
+            totalEok: Math.round((totalManWon / 10000) * 10) / 10,
+            byCat,
+            topProjects
+        };
+    }
 
     // =========================================================================
     // 3. 애플리케이션 상태 관리
@@ -350,7 +358,7 @@
                                 <span class="w-2.5 h-6 bg-blue-800 rounded-full"></span>
                                 <div>
                                     <h2 id="js-map-title" class="text-base sm:text-lg font-bold text-slate-900"></h2>
-                                    <p class="text-xs text-slate-500">지도의 시·도를 클릭하면 해당 지역의 연도별 추이와 전체 지출 내역만 필터링됩니다.</p>
+                                    <p class="text-xs text-slate-500">지도의 시·도를 누르면 <b class="text-slate-700">어디에(분야별 비중) · 어떻게(핵심 지출 사업)</b> 썼는지 상세 카드가 바로 열립니다.</p>
                                 </div>
                             </div>
                             <div class="flex flex-wrap items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200">
@@ -363,16 +371,21 @@
                                 `).join('')}
                             </div>
                         </div>
-                        <div class="relative w-full h-[460px] sm:h-[520px]">
+                        <div class="relative w-full h-[480px] sm:h-[540px]">
                             <div id="js-leaflet-map" class="w-full h-full"></div>
                             <button id="js-reset-region-btn" class="hidden absolute top-4 right-4 z-[500] bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg transition">
                                 전국 전체보기로 복귀
                             </button>
+                            <!-- 지도 위 선택 지역 '어디에·어떻게 썼나' 즉석 브리핑 패널 -->
+                            <div id="js-map-insight-card" class="hidden absolute bottom-3 left-3 right-3 sm:left-auto sm:right-4 sm:bottom-4 sm:w-[370px] z-[500] bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/90 p-4"></div>
                         </div>
                     </div>
 
-                    <!-- 2. 연도별 지자체 색상 분할 누적 막대 그래프 -->
-                    <div id="js-trend-section" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6"></div>
+                    <!-- 2. 연도별 추이 그래프 + 행정분야별 지출 구조 분석 (2단 그리드) -->
+                    <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                        <div id="js-trend-section" class="xl:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6"></div>
+                        <div id="js-category-chart-section" class="xl:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 flex flex-col justify-between"></div>
+                    </div>
 
                     <!-- 3. 지도 아래 통합 배치된 전체 세부 지출 내역 테이블 -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -436,6 +449,7 @@
 
         document.getElementById('js-category-select').addEventListener('change', (e) => {
             state.selectedCategory = e.target.value;
+            renderCategoryChart();
             renderTable();
         });
 
@@ -492,10 +506,73 @@
     function renderMapMarkers() {
         document.getElementById('js-map-title').textContent = `전국 지방재정 현황 지도 (${state.selectedYear}년)`;
         const resetBtn = document.getElementById('js-reset-region-btn');
+        const insightCard = document.getElementById('js-map-insight-card');
+
         if (state.selectedRegionId !== 'ALL') {
             resetBtn.classList.remove('hidden');
         } else {
             resetBtn.classList.add('hidden');
+        }
+
+        // 지도 위 즉석 브리핑 카드 갱신 (어디에·어떻게 썼는지 바로 시각화)
+        if (insightCard) {
+            const breakdown = getCategoryBreakdown(state.selectedYear, state.selectedRegionId);
+            const selectedReg = ALL_REGION_DEFS.find(r => r.id === state.selectedRegionId);
+            const scopeName = selectedReg ? selectedReg.name : `전국 통합 (${state.selectedYear}년)`;
+            const top3Cats = breakdown.byCat.slice(0, 3);
+
+            insightCard.classList.remove('hidden');
+            insightCard.innerHTML = `
+                <div class="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                    <div>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">지출 사용처 브리핑</span>
+                        <h3 class="text-sm font-extrabold text-slate-900 mt-1">${scopeName}</h3>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-[11px] text-slate-500">총 집행액</div>
+                        <div class="text-sm font-extrabold text-emerald-700">${breakdown.totalEok.toLocaleString()}억원</div>
+                    </div>
+                </div>
+
+                <!-- 어디에 썼나? (분야별 누적 바) -->
+                <div class="mt-2.5">
+                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-700 mb-1">
+                        <span>1. 어디에 썼나? (분야별 비중)</span>
+                        <span class="text-blue-700">1위 ${top3Cats[0]?.category} (${top3Cats[0]?.share}%)</span>
+                    </div>
+                    <div class="w-full h-3 rounded-full overflow-hidden flex bg-slate-100">
+                        ${breakdown.byCat.map(c => `
+                            <div style="width:${c.share}%; background-color:${c.color};" title="${c.category}: ${c.eok}억원 (${c.share}%)"></div>
+                        `).join('')}
+                    </div>
+                    <div class="grid grid-cols-3 gap-1.5 mt-2">
+                        ${top3Cats.map(c => `
+                            <div class="bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-100">
+                                <div class="flex items-center gap-1 text-[10px] font-bold text-slate-600 truncate">
+                                    <span class="w-2 h-2 rounded-full shrink-0" style="background:${c.color};"></span>
+                                    <span class="truncate">${c.category}</span>
+                                </div>
+                                <div class="text-xs font-extrabold text-slate-900 mt-0.5">${c.eok}억 <span class="text-[10px] font-normal text-slate-500">(${c.share}%)</span></div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <!-- 어떻게 썼나? (핵심 지출 사업 TOP 3) -->
+                <div class="mt-3 pt-2.5 border-t border-slate-100">
+                    <div class="text-[11px] font-bold text-slate-700 mb-1.5">2. 어떻게 썼나? (최대 집행 사업 TOP 3)</div>
+                    <div class="space-y-1.5">
+                        ${breakdown.topProjects.map((p, idx) => `
+                            <div class="flex items-center justify-between gap-2 text-[11px] bg-slate-50/80 px-2.5 py-1.5 rounded-lg">
+                                <div class="truncate text-slate-800 font-medium">
+                                    <span class="font-extrabold text-blue-800 mr-1">${idx + 1}.</span>${escapeHtml(p.projectName.replace(/^\[\d+\]\s*/, ''))}
+                                </div>
+                                <span class="shrink-0 font-bold text-slate-900">${formatManWon(p.amountManWon)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
         }
 
         if (!mapInstance || !markersLayer) return;
@@ -511,6 +588,8 @@
             const tier = getBudgetTier(stat.totalBudget);
             const isSelected = state.selectedRegionId === region.id;
             const size = Math.min(68, Math.max(44, Math.round(38 + Math.sqrt(stat.totalBudget) * 1.15)));
+            const regionBreakdown = getCategoryBreakdown(state.selectedYear, region.id);
+            const topCat = regionBreakdown.byCat[0];
 
             const iconHtml = `
                 <div class="custom-region-marker ${isSelected ? 'selected' : ''}"
@@ -534,10 +613,11 @@
             });
 
             marker.bindTooltip(
-                `<div style="font-family:'Noto Sans KR',sans-serif; padding:2px 4px;">
-                    <div style="font-weight:700; color:#0f172a;">${region.name} (${state.selectedYear}년)</div>
-                    <div style="font-size:12px; color:#334155;">총 예산: <b>${stat.totalBudget.toLocaleString()}억원</b></div>
-                    <div style="font-size:12px; color:#334155;">지출액: <b>${stat.totalExecuted.toLocaleString()}억원</b> (${stat.execRate}%)</div>
+                `<div style="font-family:'Noto Sans KR',sans-serif; padding:4px 6px; min-width:195px;">
+                    <div style="font-weight:800; color:#0f172a; font-size:13px; border-bottom:1px solid #e2e8f0; padding-bottom:3px; margin-bottom:4px;">${region.name} (${state.selectedYear}년)</div>
+                    <div style="font-size:12px; color:#334155;">총 예산: <b>${stat.totalBudget.toLocaleString()}억원</b> (집행 ${stat.execRate}%)</div>
+                    <div style="font-size:11.5px; color:#1d4ed8; margin-top:3px; font-weight:700;">최다 지출 분야: ${topCat.category} (${topCat.share}%)</div>
+                    <div style="font-size:11px; color:#475569; margin-top:2px;">주요 사업: ${escapeHtml(regionBreakdown.topProjects[0].projectName.replace(/^\[\d+\]\s*/, ''))}</div>
                 </div>`,
                 { direction: 'top', offset: [0, -size / 2] }
             );
@@ -549,508 +629,98 @@
     // =========================================================================
     // 7. 지역 빠른 선택 바 및 핵심 요약 카드
     // =========================================================================
-    function renderRegionBarAndSummary() {
-        const barEl = document.getElementById('js-region-bar');
-        const activeRegions = getRegionsForYear(state.selectedYear);
+    // 8-2. '어디에 어떻게 썼나?' 행정분야별 지출 구조 & 대표 사업 차트
+    // =========================================================================
+    function renderCategoryChart() {
+        const container = document.getElementById('js-category-chart-section');
+        if (!container) return;
 
-        barEl.innerHTML = `
-            <div class="flex items-center gap-2 overflow-x-auto pb-1">
-                <button data-region="ALL" class="js-region-btn shrink-0 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition ${
-                    state.selectedRegionId === 'ALL'
-                        ? 'bg-blue-800 text-white shadow-sm'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }">전국</button>
-                <div class="w-px h-5 bg-slate-200 shrink-0 mx-0.5"></div>
-                ${activeRegions.map(r => {
-                    const active = state.selectedRegionId === r.id;
-                    return `<button data-region="${r.id}" class="js-region-btn shrink-0 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
-                        active
-                            ? 'bg-slate-900 text-amber-300 shadow-sm'
-                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200/70'
-                    }">${r.shortName}</button>`;
-                }).join('')}
+        const breakdown = getCategoryBreakdown(state.selectedYear, state.selectedRegionId);
+        const selectedReg = ALL_REGION_DEFS.find(r => r.id === state.selectedRegionId);
+        const scopeLabel = selectedReg ? selectedReg.shortName : '전국';
+        const maxEok = Math.max(...breakdown.byCat.map(c => c.eok), 1);
+
+        container.innerHTML = `
+            <div>
+                <div class="flex items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-6 bg-amber-500 rounded-full"></span>
+                        <div>
+                            <h2 class="text-base sm:text-lg font-bold text-slate-900">어디에 썼나? 분야별 지출</h2>
+                            <p class="text-xs text-slate-500">${state.selectedYear}년 ${scopeLabel} 기준 (막대 클릭 시 해당 분야 필터링)</p>
+                        </div>
+                    </div>
+                    ${state.selectedCategory !== 'ALL' ? `
+                        <button id="js-cat-reset-btn" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-900 text-white hover:bg-slate-800">
+                            전체 분야
+                        </button>
+                    ` : ''}
+                </div>
+
+                <!-- 6대 분야별 가로 막대 그래프 -->
+                <div class="mt-4 space-y-3">
+                    ${breakdown.byCat.map(cat => {
+                        const barPct = Math.max(6, Math.round((cat.eok / maxEok) * 100));
+                        const isCatSelected = state.selectedCategory === cat.category;
+                        return `
+                            <button type="button" data-cat="${cat.category}" class="js-cat-bar-btn w-full text-left group p-2 rounded-xl transition ${
+                                isCatSelected ? 'bg-blue-50 ring-2 ring-blue-600' : 'hover:bg-slate-50'
+                            }">
+                                <div class="flex items-center justify-between text-xs mb-1">
+                                    <span class="font-bold text-slate-800 flex items-center gap-1.5">
+                                        <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${cat.color};"></span>
+                                        ${cat.category}
+                                    </span>
+                                    <span class="font-extrabold text-slate-900">
+                                        ${cat.eok.toLocaleString()}억원 <span class="text-slate-500 font-semibold">(${cat.share}%)</span>
+                                    </span>
+                                </div>
+                                <div class="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                                    <div class="h-full rounded-full transition-all duration-300" style="width:${barPct}%; background:${cat.color};"></div>
+                                </div>
+                            </button>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+
+            <!-- 어떻게 썼나? 핵심 집행 사업 요약 -->
+            <div class="mt-5 pt-4 border-t border-slate-100">
+                <div class="text-xs font-extrabold text-slate-800 mb-2">어떻게 썼나? 주요 집행 사업 TOP 3</div>
+                <div class="space-y-2">
+                    ${breakdown.topProjects.map((proj, idx) => `
+                        <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 flex items-center justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="text-[11px] font-bold text-blue-800">${idx + 1}위 · ${proj.regionShort} · ${proj.category}</div>
+                                <div class="text-xs font-semibold text-slate-900 truncate mt-0.5">${escapeHtml(proj.projectName.replace(/^\[\d+\]\s*/, ''))}</div>
+                            </div>
+                            <div class="shrink-0 text-xs font-extrabold text-emerald-700">${formatManWon(proj.amountManWon)}</div>
+                        </div>
+                    `).join('')}
+                </div>
             </div>
         `;
 
-        barEl.querySelectorAll('.js-region-btn').forEach(btn => {
+        container.querySelectorAll('.js-cat-bar-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                const target = btn.getAttribute('data-region');
-                state.selectedRegionId = (target === state.selectedRegionId && target !== 'ALL') ? 'ALL' : target;
-                renderAll();
+                const clickedCat = btn.getAttribute('data-cat');
+                state.selectedCategory = (state.selectedCategory === clickedCat) ? 'ALL' : clickedCat;
+                const catSelect = document.getElementById('js-category-select');
+                if (catSelect) catSelect.value = state.selectedCategory;
+                renderCategoryChart();
+                renderTable();
             });
         });
 
-        const statsMap = ALL_YEARS_DATA[state.selectedYear];
-        const regionCountLabel = state.selectedYear >= 2026 ? '16개 광역자치단체 합계' : '17개 광역자치단체 합계';
-        let title = `전국 ${state.selectedYear >= 2026 ? '16개' : '17개'} 시·도 통합`;
-        let budgetSum = 0;
-        let execSum = 0;
-        let itemTotalCount = 0;
-
-        if (state.selectedRegionId === 'ALL') {
-            activeRegions.forEach(r => {
-                const st = statsMap[r.id];
-                if (st) {
-                    budgetSum += st.totalBudget;
-                    execSum += st.totalExecuted;
-                    itemTotalCount += st.items.length;
-                }
+        const resetCatBtn = document.getElementById('js-cat-reset-btn');
+        if (resetCatBtn) {
+            resetCatBtn.addEventListener('click', () => {
+                state.selectedCategory = 'ALL';
+                const catSelect = document.getElementById('js-category-select');
+                if (catSelect) catSelect.value = 'ALL';
+                renderCategoryChart();
+                renderTable();
             });
-            budgetSum = Math.round(budgetSum * 10) / 10;
-            execSum = Math.round(execSum * 10) / 10;
-        } else {
-            const st = statsMap[state.selectedRegionId];
-            title = st.regionName;
-            budgetSum = st.totalBudget;
-            execSum = st.totalExecuted;
-            itemTotalCount = st.items.length;
-        }
-        const rate = budgetSum > 0 ? Math.round((execSum / budgetSum) * 1000) / 10 : 0;
-
-        document.getElementById('js-summary-cards').innerHTML = `
-            <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                <div class="text-xs font-semibold text-slate-500">조회 대상 (${state.selectedYear}년)</div>
-                <div class="mt-1.5 text-xl font-extrabold text-slate-900">${title}</div>
-                <div class="mt-1 text-xs text-blue-700 font-medium">${state.selectedRegionId === 'ALL' ? regionCountLabel : '개별 광역자치단체 상세'}</div>
-            </div>
-            <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                <div class="text-xs font-semibold text-slate-500">총 예산 현액</div>
-                <div class="mt-1.5 text-2xl font-extrabold text-blue-900">${budgetSum.toLocaleString()}억원</div>
-                <div class="mt-1 text-xs text-slate-500">${state.selectedYear}년 본예산 및 추경 포함</div>
-            </div>
-            <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                <div class="text-xs font-semibold text-slate-500">누적 지출 집행액</div>
-                <div class="mt-1.5 text-2xl font-extrabold text-emerald-700">${execSum.toLocaleString()}억원</div>
-                <div class="mt-1 text-xs text-emerald-600 font-semibold">집행률 ${rate}%</div>
-            </div>
-            <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                <div class="text-xs font-semibold text-slate-500">공시 지출 내역 건수</div>
-                <div class="mt-1.5 text-2xl font-extrabold text-slate-900">${itemTotalCount.toLocaleString()}건</div>
-                <div class="mt-1 text-xs text-slate-500">하단 표에서 전체 내역 열람 가능</div>
-            </div>
-        `;
-    }
-
-    // =========================================================================
-    // 8. 연도별 지자체 색상 분할 누적 막대 그래프 (통합 단일 뷰)
-    // =========================================================================
-    function renderTrendChart() {
-        const container = document.getElementById('js-trend-section');
-        const selectedRegionObj = ALL_REGION_DEFS.find(r => r.id === state.selectedRegionId);
-
-        const width = 940;
-        const height = 400;
-        const margin = { top: 34, right: 20, bottom: 38, left: 68 };
-        const innerW = width - margin.left - margin.right;
-        const innerH = height - margin.top - margin.bottom;
-
-        // 전국 보기일 때: 연도별 막대 하나 안에 17개 시·도의 금액이 색상별로 누적 분할됨
-        if (!selectedRegionObj) {
-            const metricKey = state.chartMetric === 'budget' ? 'totalBudget' : 'totalExecuted';
-            const metricLabel = state.chartMetric === 'budget' ? '총 예산' : '지출액';
-
-            // 연도별 누적 데이터 계산 (각 연도별 유효 시·도 기준: 2026년부터 광주전남특별시 반영)
-            const yearStacks = YEARS.map(yr => {
-                const yrRegions = [...getRegionsForYear(yr)].sort((a, b) => b.baseScale - a.baseScale);
-                let cumulative = 0;
-                const segments = yrRegions.map(region => {
-                    const val = ALL_YEARS_DATA[yr][region.id][metricKey];
-                    const start = cumulative;
-                    cumulative += val;
-                    return {
-                        regionId: region.id,
-                        shortName: region.shortName,
-                        fullName: region.name,
-                        color: region.color,
-                        value: val,
-                        start,
-                        end: Math.round(cumulative * 10) / 10
-                    };
-                });
-                const total = Math.round(cumulative * 10) / 10;
-                segments.forEach(seg => {
-                    seg.share = total > 0 ? Math.round((seg.value / total) * 1000) / 10 : 0;
-                });
-                return { year: yr, total, segments };
-            });
-
-            const legendRegions = [...getRegionsForYear(state.selectedYear)].sort((a, b) => b.baseScale - a.baseScale);
-
-            const maxTotal = Math.max(...yearStacks.map(d => d.total), 100);
-            const yMax = Math.ceil((maxTotal * 1.12) / 500) * 500;
-
-            const yTicks = [];
-            for (let i = 0; i <= 5; i++) {
-                const val = (yMax * i) / 5;
-                yTicks.push({ val, label: `${Math.round(val).toLocaleString()}억` });
-            }
-
-            const getY = (val) => margin.top + innerH - (val / yMax) * innerH;
-            const slotW = innerW / YEARS.length;
-            const barW = Math.min(50, Math.max(28, slotW * 0.72));
-
-            container.innerHTML = `
-                <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-100">
-                    <div class="flex items-center gap-2.5">
-                        <span class="w-2.5 h-6 bg-indigo-700 rounded-full"></span>
-                        <div>
-                            <h2 class="text-base sm:text-lg font-bold text-slate-900">
-                                연도별 전국 ${metricLabel} 및 지자체별 비중 추이 (2014~${CURRENT_YEAR}년)
-                            </h2>
-                            <p class="text-xs text-slate-500">
-                                막대를 누르거나 아래 지자체 버튼을 선택해 상세 내역을 확인하세요 (2026년부터 광주전남특별시 통합 반영).
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- 하나로 통합된 단일 지표 전환 버튼 -->
-                    <div class="inline-flex rounded-xl bg-slate-100 p-1 self-start lg:self-auto">
-                        <button data-metric="budget" class="js-metric-btn px-4 py-2 rounded-lg text-xs font-bold transition ${
-                            state.chartMetric === 'budget' ? 'bg-blue-800 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                        }">총 예산 기준</button>
-                        <button data-metric="executed" class="js-metric-btn px-4 py-2 rounded-lg text-xs font-bold transition ${
-                            state.chartMetric === 'executed' ? 'bg-emerald-700 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                        }">지출액 기준</button>
-                    </div>
-                </div>
-
-                <!-- 모바일 터치 시 선택된 막대/연도 빠른 이동 배너 -->
-                <div id="js-mobile-chart-picker" class="hidden mt-3 p-3 rounded-xl bg-blue-50/90 border border-blue-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5"></div>
-
-                <!-- 누적 막대 그래프 SVG -->
-                <div class="mt-4 w-full overflow-x-auto">
-                    <div class="min-w-[680px]">
-                        <svg id="js-trend-svg" viewBox="0 0 ${width} ${height}" class="w-full h-auto select-none">
-                            <!-- Y축 가로 눈금선 -->
-                            ${yTicks.map(t => {
-                                const yPos = getY(t.val);
-                                return `
-                                    <line x1="${margin.left}" y1="${yPos}" x2="${width - margin.right}" y2="${yPos}" stroke="#e2e8f0" stroke-dasharray="4 4" />
-                                    <text x="${margin.left - 10}" y="${yPos + 4}" text-anchor="end" font-size="11" fill="#64748b" font-weight="500">${t.label}</text>
-                                `;
-                            }).join('')}
-
-                            <!-- 연도별 색상 분할 누적 막대 -->
-                            ${yearStacks.map((stack, idx) => {
-                                const centerX = margin.left + slotW * idx + slotW / 2;
-                                const xPos = centerX - barW / 2;
-                                const topY = getY(stack.total);
-                                const isCurrentSelectedYear = stack.year === state.selectedYear;
-
-                                const segRects = stack.segments.map(seg => {
-                                    const yTop = getY(seg.end);
-                                    const yBot = getY(seg.start);
-                                    const segH = Math.max(2, yBot - yTop);
-                                    return `
-                                        <rect
-                                            x="${xPos}"
-                                            y="${yTop}"
-                                            width="${barW}"
-                                            height="${segH}"
-                                            fill="${seg.color}"
-                                            stroke="#ffffff"
-                                            stroke-width="0.7"
-                                            class="stacked-bar-seg js-stack-seg"
-                                            style="cursor:pointer;"
-                                            data-year="${stack.year}"
-                                            data-total="${stack.total}"
-                                            data-region-id="${seg.regionId}"
-                                            data-region-short="${seg.shortName}"
-                                            data-region-name="${seg.fullName}"
-                                            data-value="${seg.value}"
-                                            data-share="${seg.share}"
-                                        ><title>${seg.fullName} (${stack.year}년: ${seg.value.toLocaleString()}억원)</title></rect>
-                                    `;
-                                }).join('');
-
-                                return `
-                                    <g>
-                                        ${segRects}
-                                        <!-- 막대 상단 전국 합계 금액 표기 -->
-                                        <text x="${centerX}" y="${topY - 7}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${isCurrentSelectedYear ? '#1e3a8a' : '#334155'}">
-                                            ${Math.round(stack.total).toLocaleString()}억
-                                        </text>
-                                        <!-- X축 연도 라벨 -->
-                                        <text x="${centerX}" y="${height - 12}" text-anchor="middle" font-size="11.5" font-weight="${isCurrentSelectedYear ? '800' : '500'}" fill="${isCurrentSelectedYear ? '#1e3a8a' : '#64748b'}">
-                                            ${stack.year}
-                                        </text>
-                                    </g>
-                                `;
-                            }).join('')}
-                        </svg>
-                    </div>
-                </div>
-
-                <!-- 하단 시·도 색상 범례 (클릭 시 해당 지역 필터링) -->
-                <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
-                    <span class="w-full sm:w-auto text-xs font-bold text-slate-600 mr-1">지자체 직접 선택 (터치 시 상세조회):</span>
-                    ${legendRegions.map(r => `
-                        <button data-region-id="${r.id}" class="js-stack-legend inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 bg-slate-50 active:bg-blue-100 hover:bg-slate-100 text-slate-800 transition">
-                            <span class="w-3 h-3 rounded-xs inline-block shrink-0" style="background-color:${r.color};"></span>
-                            <span>${r.shortName}</span>
-                        </button>
-                    `).join('')}
-                </div>
-            `;
-
-            // 총 예산 / 지출액 전환 이벤트
-            container.querySelectorAll('.js-metric-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    state.chartMetric = btn.getAttribute('data-metric');
-                    renderTrendChart();
-                });
-            });
-
-            // 말풍선 엘리먼트가 지워졌더라도 항상 존재하도록 보장
-            let tooltipEl = document.getElementById('js-chart-floating-tooltip');
-            if (!tooltipEl) {
-                tooltipEl = document.createElement('div');
-                tooltipEl.id = 'js-chart-floating-tooltip';
-                tooltipEl.className = 'js-chart-tooltip';
-                document.body.appendChild(tooltipEl);
-            }
-
-            // 막대 분할 구간 마우스 커서 옆 휘발성 말풍선 및 모바일 터치 지원
-            const svgEl = document.getElementById('js-trend-svg');
-            const mobilePickerEl = document.getElementById('js-mobile-chart-picker');
-            let isTouchInteraction = false;
-
-            const positionTooltipAt = (clientX, clientY) => {
-                const tipW = tooltipEl.offsetWidth || 170;
-                const tipH = tooltipEl.offsetHeight || 52;
-                const x = (clientX + 14 + tipW > window.innerWidth) ? Math.max(8, clientX - tipW - 14) : (clientX + 14);
-                const y = (clientY - tipH - 12 < 0) ? (clientY + 18) : (clientY - tipH - 12);
-                tooltipEl.style.left = `${x}px`;
-                tooltipEl.style.top = `${y}px`;
-            };
-
-            const hideTooltip = () => {
-                tooltipEl.style.display = 'none';
-            };
-
-            const navigateToRegion = (rId) => {
-                if (!rId) return;
-                if (state.selectedYear >= 2026 && (rId === '29' || rId === '46')) {
-                    state.selectedRegionId = '2946';
-                } else if (state.selectedYear < 2026 && rId === '2946') {
-                    state.selectedRegionId = '29';
-                } else {
-                    state.selectedRegionId = rId;
-                }
-                renderAll();
-            };
-
-            if (svgEl) {
-                svgEl.querySelectorAll('.js-stack-seg').forEach(seg => {
-                    const renderSegTooltip = (clientX, clientY) => {
-                        const yr = seg.getAttribute('data-year');
-                        const rShort = seg.getAttribute('data-region-short');
-                        const rName = seg.getAttribute('data-region-name');
-                        const val = Number(seg.getAttribute('data-value')).toLocaleString();
-                        const share = seg.getAttribute('data-share');
-                        const segColor = seg.getAttribute('fill');
-
-                        tooltipEl.innerHTML = `
-                            <div style="display:flex; align-items:center; gap:6px; font-weight:800; font-size:13.5px; color:#fde047;">
-                                <span style="width:11px; height:11px; border-radius:3px; background:${segColor}; display:inline-block; border:1.5px solid #fff;"></span>
-                                <span>${rShort} (${rName})</span>
-                            </div>
-                            <div style="margin-top:2px; font-size:11.5px; color:#f1f5f9;">
-                                ${yr}년 ${metricLabel}: <b>${val}억원</b> <span style="color:#94a3b8;">(${share}%)</span>
-                            </div>
-                        `;
-                        tooltipEl.style.display = 'block';
-                        positionTooltipAt(clientX, clientY);
-                    };
-
-                    // 모바일 터치 시: 오터치 방지를 위해 말풍선 + 하단 큰 확인 버튼 표시
-                    seg.addEventListener('touchstart', (e) => {
-                        isTouchInteraction = true;
-                        const touch = e.touches && e.touches[0];
-                        if (touch) {
-                            renderSegTooltip(touch.clientX, touch.clientY);
-                        }
-                        const yr = Number(seg.getAttribute('data-year'));
-                        const rId = seg.getAttribute('data-region-id');
-                        const rName = seg.getAttribute('data-region-name');
-                        const val = Number(seg.getAttribute('data-value')).toLocaleString();
-                        const share = seg.getAttribute('data-share');
-                        const segColor = seg.getAttribute('fill');
-                        const yearObj = yearStacks.find(s => s.year === yr);
-
-                        if (mobilePickerEl && yearObj) {
-                            mobilePickerEl.classList.remove('hidden');
-                            mobilePickerEl.innerHTML = `
-                                <div class="flex items-center justify-between gap-2">
-                                    <div class="flex items-center gap-2">
-                                        <span class="w-3.5 h-3.5 rounded-xs shrink-0 border border-white shadow-2xs" style="background:${segColor};"></span>
-                                        <div class="text-xs sm:text-sm text-slate-900">
-                                            <span class="font-extrabold">${yr}년 ${rName}</span>
-                                            <span class="text-slate-600 ml-1">(${val}억원 · ${share}%)</span>
-                                        </div>
-                                    </div>
-                                    <button type="button" data-go-region="${rId}" class="js-mobile-go-btn shrink-0 bg-blue-800 active:bg-blue-900 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-2xs">
-                                        이 지역 상세보기 →
-                                    </button>
-                                </div>
-                                <div class="flex items-center gap-1.5 overflow-x-auto pt-1 pb-0.5">
-                                    <span class="text-[11px] font-bold text-slate-500 shrink-0">${yr}년 다른 지역:</span>
-                                    ${yearObj.segments.map(s => `
-                                        <button type="button" data-go-region="${s.regionId}" class="js-mobile-go-btn shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border ${
-                                            s.regionId === rId ? 'bg-slate-900 text-amber-300 border-slate-900' : 'bg-white text-slate-700 border-slate-200'
-                                        }">
-                                            ${s.shortName} ${Math.round(s.value).toLocaleString()}억
-                                        </button>
-                                    `).join('')}
-                                </div>
-                            `;
-                            mobilePickerEl.querySelectorAll('.js-mobile-go-btn').forEach(btn => {
-                                btn.addEventListener('click', () => {
-                                    hideTooltip();
-                                    navigateToRegion(btn.getAttribute('data-go-region'));
-                                });
-                            });
-                        }
-                    }, { passive: true });
-
-                    seg.addEventListener('mouseenter', (e) => {
-                        if (!isTouchInteraction) renderSegTooltip(e.clientX, e.clientY);
-                    });
-                    seg.addEventListener('mousemove', (e) => {
-                        if (!isTouchInteraction) renderSegTooltip(e.clientX, e.clientY);
-                    });
-                    seg.addEventListener('mouseleave', () => {
-                        if (!isTouchInteraction) hideTooltip();
-                    });
-                    seg.addEventListener('click', () => {
-                        if (isTouchInteraction) {
-                            isTouchInteraction = false;
-                            return;
-                        }
-                        hideTooltip();
-                        navigateToRegion(seg.getAttribute('data-region-id'));
-                    });
-                });
-
-                svgEl.addEventListener('mouseleave', hideTooltip);
-            }
-
-            // 범례 클릭 시 해당 지자체 선택
-            container.querySelectorAll('.js-stack-legend').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const rId = btn.getAttribute('data-region-id');
-                    if (rId) {
-                        state.selectedRegionId = rId;
-                        renderAll();
-                    }
-                });
-            });
-        } else {
-            // 개별 지자체 선택 시: 연도별 총 예산(파랑)과 지출액(초록) 막대 비교
-            // (2026년 통합된 광주전남특별시의 경우 2014~2025년은 광주+전남 합산 추이로 연속 비교 제공)
-            const regionSeries = YEARS.map(yr => {
-                if (selectedRegionObj.id === '2946' && yr < 2026) {
-                    const gj = ALL_YEARS_DATA[yr]['29'];
-                    const jn = ALL_YEARS_DATA[yr]['46'];
-                    return {
-                        year: yr,
-                        budget: Math.round((gj.totalBudget + jn.totalBudget) * 10) / 10,
-                        executed: Math.round((gj.totalExecuted + jn.totalExecuted) * 10) / 10
-                    };
-                }
-                if ((selectedRegionObj.id === '29' || selectedRegionObj.id === '46') && yr >= 2026) {
-                    const ratio = selectedRegionObj.id === '29' ? (1.24 / 2.86) : (1.62 / 2.86);
-                    const merged = ALL_YEARS_DATA[yr]['2946'];
-                    return {
-                        year: yr,
-                        budget: Math.round(merged.totalBudget * ratio * 10) / 10,
-                        executed: Math.round(merged.totalExecuted * ratio * 10) / 10
-                    };
-                }
-                return {
-                    year: yr,
-                    budget: ALL_YEARS_DATA[yr][selectedRegionObj.id].totalBudget,
-                    executed: ALL_YEARS_DATA[yr][selectedRegionObj.id].totalExecuted
-                };
-            });
-
-            const maxVal = Math.max(...regionSeries.map(d => d.budget), 50);
-            const yMax = Math.ceil((maxVal * 1.15) / 50) * 50;
-
-            const yTicks = [];
-            for (let i = 0; i <= 5; i++) {
-                const val = (yMax * i) / 5;
-                yTicks.push({ val, label: `${Math.round(val).toLocaleString()}억` });
-            }
-
-            const getY = (val) => margin.top + innerH - (val / yMax) * innerH;
-            const slotW = innerW / YEARS.length;
-            const singleBarW = Math.min(20, Math.max(10, slotW * 0.28));
-
-            container.innerHTML = `
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-slate-100">
-                    <div class="flex items-center gap-2.5">
-                        <span class="w-2.5 h-6 bg-indigo-700 rounded-full"></span>
-                        <div>
-                            <h2 class="text-base sm:text-lg font-bold text-slate-900">
-                                ${selectedRegionObj.name} 연도별 예산 및 지출액 추이 (2014~${CURRENT_YEAR}년)
-                            </h2>
-                            <p class="text-xs text-slate-500">해당 지자체의 연도별 총 예산과 실제 지출 집행액 변화입니다.</p>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-3 text-xs font-semibold">
-                        <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-xs bg-blue-800 inline-block"></span>총 예산</span>
-                        <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-xs bg-emerald-600 inline-block"></span>지출액</span>
-                        <button id="js-chart-reset-btn" class="ml-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-2xs transition cursor-pointer">
-                            전국 전체보기
-                        </button>
-                    </div>
-                </div>
-
-                <div class="mt-4 w-full overflow-x-auto">
-                    <div class="min-w-[700px]">
-                        <svg viewBox="0 0 ${width} ${height}" class="w-full h-auto select-none">
-                            ${yTicks.map(t => {
-                                const yPos = getY(t.val);
-                                return `
-                                    <line x1="${margin.left}" y1="${yPos}" x2="${width - margin.right}" y2="${yPos}" stroke="#e2e8f0" stroke-dasharray="4 4" />
-                                    <text x="${margin.left - 10}" y="${yPos + 4}" text-anchor="end" font-size="11" fill="#64748b" font-weight="500">${t.label}</text>
-                                `;
-                            }).join('')}
-
-                            ${regionSeries.map((d, idx) => {
-                                const centerX = margin.left + slotW * idx + slotW / 2;
-                                const yB = getY(d.budget);
-                                const hB = Math.max(2, margin.top + innerH - yB);
-                                const yE = getY(d.executed);
-                                const hE = Math.max(2, margin.top + innerH - yE);
-                                const isSelYr = d.year === state.selectedYear;
-
-                                return `
-                                    <g>
-                                        <rect x="${centerX - singleBarW - 1.5}" y="${yB}" width="${singleBarW}" height="${hB}" rx="2" fill="#1e40af" />
-                                        <rect x="${centerX + 1.5}" y="${yE}" width="${singleBarW}" height="${hE}" rx="2" fill="#059669" />
-                                        <text x="${centerX}" y="${yB - 6}" text-anchor="middle" font-size="10" font-weight="700" fill="#1e3a8a">
-                                            ${Math.round(d.budget).toLocaleString()}억
-                                        </text>
-                                        <text x="${centerX}" y="${height - 12}" text-anchor="middle" font-size="11.5" font-weight="${isSelYr ? '800' : '500'}" fill="${isSelYr ? '#1e3a8a' : '#64748b'}">
-                                            ${d.year}
-                                        </text>
-                                    </g>
-                                `;
-                            }).join('')}
-                        </svg>
-                    </div>
-                </div>
-            `;
-
-            const chartResetBtn = document.getElementById('js-chart-reset-btn');
-            if (chartResetBtn) {
-                chartResetBtn.addEventListener('click', () => {
-                    state.selectedRegionId = 'ALL';
-                    renderAll();
-                });
-            }
         }
     }
 
@@ -1162,6 +832,7 @@
         renderRegionBarAndSummary();
         renderMapMarkers();
         renderTrendChart();
+        renderCategoryChart();
         renderTable();
     }
 
