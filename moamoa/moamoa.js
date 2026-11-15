@@ -134,7 +134,47 @@
 
         for (let i = 0; i < itemCount; i++) {
             const cat = CATEGORIES[(seedNum + year + i) % CATEGORIES.length];
-        // 2014 ~ 현재연도 전체 데이터 사전 생성 (2026년부터는 광주전남특별시 기준 생성)
+            const templates = PROJECT_TEMPLATES[cat];
+            const baseTitle = templates[(seedNum + i * 3 + year) % templates.length];
+            const vendor = VENDORS[(seedNum * 3 + i * 5 + year) % VENDORS.length];
+
+            const isLast = i === itemCount - 1;
+            const avgShare = Math.max(1200, Math.round(remainingExecutedManWon / (itemCount - i)));
+            const weight = 0.65 + (((seedNum + i * 7 + year) % 10) * 0.08);
+            const amountManWon = isLast
+                ? Math.max(1200, remainingExecutedManWon)
+                : Math.max(1200, Math.round(avgShare * weight));
+
+            remainingExecutedManWon = Math.max(1200, remainingExecutedManWon - amountManWon);
+
+            const month = String(((i * 3 + seedNum) % 12) + 1).padStart(2, '0');
+            const day = String(((i * 7 + year) % 28) + 1).padStart(2, '0');
+
+            items.push({
+                id: `${year}-${region.id}-${i}`,
+                year,
+                regionId: region.id,
+                regionName: region.name,
+                regionShort: region.shortName,
+                category: cat,
+                projectName: `[${year}] ${region.shortName} ${baseTitle} (${i + 1}차)`,
+                vendor,
+                amountManWon,
+                date: `${year}-${month}-${day}`
+            });
+        }
+
+        return {
+            region,
+            year,
+            totalBudget,
+            totalExecuted,
+            execRate: Math.round((totalExecuted / totalBudget) * 1000) / 10,
+            items
+        };
+    }
+
+    // 2014 ~ 현재연도 전체 데이터 사전 생성 (2026년부터는 광주전남특별시 기준 생성)
     const ALL_YEARS_DATA = {};
     YEARS.forEach(yr => {
         ALL_YEARS_DATA[yr] = {};
@@ -628,6 +668,406 @@
 
     // =========================================================================
     // 7. 지역 빠른 선택 바 및 핵심 요약 카드
+    // =========================================================================
+    function renderRegionBarAndSummary() {
+        const regionBar = document.getElementById('js-region-bar');
+        const summaryCards = document.getElementById('js-summary-cards');
+        const activeRegions = getRegionsForYear(state.selectedYear);
+        const statsMap = ALL_YEARS_DATA[state.selectedYear];
+
+        if (regionBar) {
+            regionBar.innerHTML = `
+                <div class="flex items-center gap-2 overflow-x-auto pb-1">
+                    <span class="text-xs font-bold text-slate-500 shrink-0 mr-1">지자체 선택:</span>
+                    <button data-reg="ALL" class="js-reg-pill shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                        state.selectedRegionId === 'ALL'
+                            ? 'bg-slate-900 text-white shadow-sm'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }">
+                        전국 (${activeRegions.length}개 시·도)
+                    </button>
+                    ${activeRegions.map(r => {
+                        const isSel = state.selectedRegionId === r.id;
+                        return `
+                            <button data-reg="${r.id}" class="js-reg-pill shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                                isSel
+                                    ? 'bg-blue-700 text-white shadow-sm'
+                                    : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
+                            }">
+                                <span class="w-2 h-2 rounded-full" style="background:${r.color};"></span>
+                                ${r.shortName}
+                            </button>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            regionBar.querySelectorAll('.js-reg-pill').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.selectedRegionId = btn.getAttribute('data-reg');
+                    renderAll();
+                });
+            });
+        }
+
+        if (summaryCards) {
+            let totalBudget = 0;
+            let totalExecuted = 0;
+            let totalCount = 0;
+
+            if (state.selectedRegionId === 'ALL') {
+                activeRegions.forEach(r => {
+                    const st = statsMap[r.id];
+                    if (st) {
+                        totalBudget += st.totalBudget;
+                        totalExecuted += st.totalExecuted;
+                        totalCount += st.items.length;
+                    }
+                });
+            } else if (statsMap[state.selectedRegionId]) {
+                const st = statsMap[state.selectedRegionId];
+                totalBudget = st.totalBudget;
+                totalExecuted = st.totalExecuted;
+                totalCount = st.items.length;
+            }
+
+            totalBudget = Math.round(totalBudget * 10) / 10;
+            totalExecuted = Math.round(totalExecuted * 10) / 10;
+            const execRate = totalBudget > 0 ? Math.round((totalExecuted / totalBudget) * 1000) / 10 : 0;
+            const breakdown = getCategoryBreakdown(state.selectedYear, state.selectedRegionId);
+            const topCat = breakdown.byCat[0] || { category: '-', share: 0, eok: 0 };
+            const selectedReg = ALL_REGION_DEFS.find(r => r.id === state.selectedRegionId);
+            const scopeName = selectedReg ? selectedReg.name : '전국 통합';
+
+            summaryCards.innerHTML = `
+                <div class="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-200">
+                    <div class="text-xs font-bold text-slate-500">${scopeName} 총 예산액 (${state.selectedYear}년)</div>
+                    <div class="text-xl sm:text-2xl font-extrabold text-slate-900 mt-1.5">${totalBudget.toLocaleString()}억원</div>
+                    <div class="text-xs text-blue-700 font-semibold mt-1">세입·세출 본예산 기준</div>
+                </div>
+                <div class="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-200">
+                    <div class="text-xs font-bold text-slate-500">실제 세출 집행액</div>
+                    <div class="text-xl sm:text-2xl font-extrabold text-emerald-700 mt-1.5">${totalExecuted.toLocaleString()}억원</div>
+                    <div class="text-xs text-slate-500 mt-1">집행률 <b class="text-slate-800">${execRate}%</b></div>
+                </div>
+                <div class="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-200">
+                    <div class="text-xs font-bold text-slate-500">최다 지출 행정분야</div>
+                    <div class="text-xl sm:text-2xl font-extrabold text-indigo-700 mt-1.5">${topCat.category}</div>
+                    <div class="text-xs text-slate-500 mt-1">${topCat.eok.toLocaleString()}억원 (전체의 <b>${topCat.share}%</b>)</div>
+                </div>
+                <div class="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-200">
+                    <div class="text-xs font-bold text-slate-500">공시 세부 집행 건수</div>
+                    <div class="text-xl sm:text-2xl font-extrabold text-slate-900 mt-1.5">${totalCount.toLocaleString()}건</div>
+                    <div class="text-xs text-slate-500 mt-1">전 항목 누락 없이 공개</div>
+                </div>
+            `;
+        }
+    }
+
+    // =========================================================================
+    // 8-1. 연도별 지자체 색상 분할 누적 막대 그래프 (모바일 터치 연동 포함)
+    // =========================================================================
+    function ensureFloatingTooltip() {
+        let el = document.getElementById('js-chart-floating-tooltip');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'js-chart-floating-tooltip';
+            el.className = 'js-chart-tooltip';
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
+    function renderTrendChart() {
+        const container = document.getElementById('js-trend-section');
+        if (!container) return;
+
+        const isAll = state.selectedRegionId === 'ALL';
+        const selectedReg = ALL_REGION_DEFS.find(r => r.id === state.selectedRegionId);
+        const metricLabel = state.chartMetric === 'budget' ? '총 예산' : '실제 지출액';
+
+        // 연도별 데이터 계산
+        const yearlySeries = YEARS.map(yr => {
+            const regs = getRegionsForYear(yr);
+            const statsMap = ALL_YEARS_DATA[yr];
+            if (isAll) {
+                const segments = regs.map(r => {
+                    const st = statsMap[r.id];
+                    const val = st ? (state.chartMetric === 'budget' ? st.totalBudget : st.totalExecuted) : 0;
+                    return {
+                        regionId: r.id,
+                        shortName: r.shortName,
+                        name: r.name,
+                        color: r.color,
+                        value: Math.round(val * 10) / 10
+                    };
+                });
+                const total = Math.round(segments.reduce((s, x) => s + x.value, 0) * 10) / 10;
+                return { year: yr, total, segments };
+            } else {
+                // 2026년 광주전남특별시와 2014~2025년 광주/전남 자연 연결
+                let st = statsMap[state.selectedRegionId];
+                if (!st && state.selectedRegionId === '2946' && yr < 2026) {
+                    const gj = statsMap['29'];
+                    const jn = statsMap['46'];
+                    st = {
+                        totalBudget: Math.round(((gj?.totalBudget || 0) + (jn?.totalBudget || 0)) * 10) / 10,
+                        totalExecuted: Math.round(((gj?.totalExecuted || 0) + (jn?.totalExecuted || 0)) * 10) / 10
+                    };
+                } else if (!st && (state.selectedRegionId === '29' || state.selectedRegionId === '46') && yr >= 2026) {
+                    st = statsMap['2946'];
+                }
+                return {
+                    year: yr,
+                    budget: st ? st.totalBudget : 0,
+                    executed: st ? st.totalExecuted : 0
+                };
+            }
+        });
+
+        const maxTotal = isAll
+            ? Math.max(...yearlySeries.map(d => d.total), 1)
+            : Math.max(...yearlySeries.map(d => d.budget), 1);
+
+        const svgW = 760;
+        const svgH = 310;
+        const padL = 56;
+        const padR = 16;
+        const padT = 26;
+        const padB = 34;
+        const plotW = svgW - padL - padR;
+        const plotH = svgH - padT - padB;
+        const colW = plotW / yearlySeries.length;
+        const barW = Math.min(36, Math.max(18, colW * 0.62));
+
+        let barsSvg = '';
+        if (isAll) {
+            yearlySeries.forEach((d, idx) => {
+                const x = padL + idx * colW + (colW - barW) / 2;
+                let currentY = padT + plotH;
+
+                d.segments.forEach(seg => {
+                    const segH = (seg.value / maxTotal) * plotH;
+                    if (segH <= 0) return;
+                    currentY -= segH;
+                    const share = d.total > 0 ? ((seg.value / d.total) * 100).toFixed(1) : '0.0';
+                    barsSvg += `
+                        <rect
+                            class="stacked-bar-seg cursor-pointer"
+                            x="${x.toFixed(1)}"
+                            y="${currentY.toFixed(1)}"
+                            width="${barW.toFixed(1)}"
+                            height="${Math.max(1.2, segH).toFixed(1)}"
+                            fill="${seg.color}"
+                            data-year="${d.year}"
+                            data-reg-id="${seg.regionId}"
+                            data-reg-short="${seg.shortName}"
+                            data-reg-name="${seg.name}"
+                            data-val="${seg.value}"
+                            data-share="${share}"
+                        >
+                            <title>${d.year}년 ${seg.shortName} (${seg.name}): ${seg.value.toLocaleString()}억원 (${share}%)</title>
+                        </rect>
+                    `;
+                });
+
+                barsSvg += `
+                    <text x="${(x + barW / 2).toFixed(1)}" y="${Math.max(13, currentY - 6).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="#334155">
+                        ${Math.round(d.total).toLocaleString()}
+                    </text>
+                    <text x="${(x + barW / 2).toFixed(1)}" y="${svgH - 10}" text-anchor="middle" font-size="11" font-weight="${d.year === state.selectedYear ? '800' : '600'}" fill="${d.year === state.selectedYear ? '#1d4ed8' : '#475569'}">
+                        ${String(d.year).slice(2)}년
+                    </text>
+                `;
+            });
+        } else {
+            yearlySeries.forEach((d, idx) => {
+                const centerX = padL + idx * colW + colW / 2;
+                const singleW = Math.min(16, barW * 0.46);
+                const hBudget = (d.budget / maxTotal) * plotH;
+                const hExec = (d.executed / maxTotal) * plotH;
+                const yBudget = padT + plotH - hBudget;
+                const yExec = padT + plotH - hExec;
+
+                barsSvg += `
+                    <rect x="${(centerX - singleW - 1.5).toFixed(1)}" y="${yBudget.toFixed(1)}" width="${singleW.toFixed(1)}" height="${hBudget.toFixed(1)}" rx="3" fill="#2563eb">
+                        <title>${d.year}년 총 예산: ${d.budget.toLocaleString()}억원</title>
+                    </rect>
+                    <rect x="${(centerX + 1.5).toFixed(1)}" y="${yExec.toFixed(1)}" width="${singleW.toFixed(1)}" height="${hExec.toFixed(1)}" rx="3" fill="#10b981">
+                        <title>${d.year}년 지출액: ${d.executed.toLocaleString()}억원</title>
+                    </rect>
+                    <text x="${centerX.toFixed(1)}" y="${Math.max(13, yBudget - 5).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1e293b">
+                        ${Math.round(d.budget).toLocaleString()}
+                    </text>
+                    <text x="${centerX.toFixed(1)}" y="${svgH - 10}" text-anchor="middle" font-size="11" font-weight="${d.year === state.selectedYear ? '800' : '600'}" fill="${d.year === state.selectedYear ? '#1d4ed8' : '#475569'}">
+                        ${String(d.year).slice(2)}년
+                    </text>
+                `;
+            });
+        }
+
+        const activeRegionsForLegend = getRegionsForYear(state.selectedYear);
+
+        container.innerHTML = `
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-slate-100">
+                <div class="flex items-center gap-2.5">
+                    <span class="w-2.5 h-6 bg-indigo-700 rounded-full"></span>
+                    <div>
+                        <h2 class="text-base sm:text-lg font-bold text-slate-900">
+                            ${isAll ? `연도별 지자체 ${metricLabel} 누적 추이 (2014~${CURRENT_YEAR}년)` : `${selectedReg?.name || ''} 연도별 예산·지출 추이`}
+                        </h2>
+                        <p class="text-xs text-slate-500">
+                            ${isAll ? '막대 색상 칸에 마우스를 올리면 지자체명과 금액이 표시되며, 클릭 시 해당 지역으로 이동합니다.' : '파란색은 총 예산(억원), 초록색은 실제 지출액(억원)을 나타냅니다.'}
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    ${isAll ? `
+                        <div class="inline-flex rounded-xl bg-slate-100 p-1">
+                            <button type="button" data-metric="budget" class="js-metric-btn px-3 py-1.5 rounded-lg text-xs font-bold transition ${state.chartMetric === 'budget' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}">총 예산</button>
+                            <button type="button" data-metric="executed" class="js-metric-btn px-3 py-1.5 rounded-lg text-xs font-bold transition ${state.chartMetric === 'executed' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}">지출액</button>
+                        </div>
+                    ` : `
+                        <button type="button" id="js-chart-all-btn" class="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition">
+                            전국 전체보기
+                        </button>
+                    `}
+                </div>
+            </div>
+
+            <div class="mt-4 w-full overflow-x-auto">
+                <svg id="js-trend-svg" viewBox="0 0 ${svgW} ${svgH}" class="w-full min-w-[540px] h-auto select-none">
+                    ${[0, 0.25, 0.5, 0.75, 1].map(ratio => {
+                        const y = padT + plotH - ratio * plotH;
+                        const val = Math.round(maxTotal * ratio);
+                        return `
+                            <line x1="${padL}" y1="${y.toFixed(1)}" x2="${svgW - padR}" y2="${y.toFixed(1)}" stroke="#e2e8f0" stroke-dasharray="3 3" />
+                            <text x="${padL - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="#64748b">${val.toLocaleString()}</text>
+                        `;
+                    }).join('')}
+                    ${barsSvg}
+                </svg>
+            </div>
+
+            <!-- 모바일 터치 보조 선택 바 & 시·도 색상 범례 -->
+            <div id="js-mobile-touch-panel" class="hidden mt-3 p-3 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between gap-2"></div>
+
+            ${isAll ? `
+                <div class="mt-4 pt-3 border-t border-slate-100 flex flex-wrap gap-1.5">
+                    ${activeRegionsForLegend.map(r => `
+                        <button type="button" data-reg="${r.id}" class="js-legend-reg-btn inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700 transition">
+                            <span class="w-2.5 h-2.5 rounded-full" style="background:${r.color};"></span>
+                            ${r.shortName}
+                        </button>
+                    `).join('')}
+                </div>
+            ` : `
+                <div class="mt-3 flex items-center gap-4 text-xs font-bold text-slate-600">
+                    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-blue-600 inline-block"></span>총 예산 (억원)</span>
+                    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-emerald-500 inline-block"></span>실제 지출액 (억원)</span>
+                </div>
+            `}
+        `;
+
+        // 지표 전환 및 전국 복귀 이벤트
+        container.querySelectorAll('.js-metric-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                state.chartMetric = btn.getAttribute('data-metric');
+                renderTrendChart();
+            });
+        });
+
+        const allBtn = document.getElementById('js-chart-all-btn');
+        if (allBtn) {
+            allBtn.addEventListener('click', () => {
+                state.selectedRegionId = 'ALL';
+                renderAll();
+            });
+        }
+
+        container.querySelectorAll('.js-legend-reg-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                state.selectedRegionId = btn.getAttribute('data-reg');
+                renderAll();
+            });
+        });
+
+        // 마우스 커서 옆 지역명 휘발성 말풍선 및 클릭/터치 연동
+        const svgEl = document.getElementById('js-trend-svg');
+        const tooltipEl = ensureFloatingTooltip();
+        const mobilePanel = document.getElementById('js-mobile-touch-panel');
+
+        if (svgEl && isAll) {
+            svgEl.querySelectorAll('.stacked-bar-seg').forEach(seg => {
+                const showTip = (clientX, clientY) => {
+                    const yr = seg.getAttribute('data-year');
+                    const shortName = seg.getAttribute('data-reg-short');
+                    const fullName = seg.getAttribute('data-reg-name');
+                    const val = Number(seg.getAttribute('data-val')).toLocaleString();
+                    const share = seg.getAttribute('data-share');
+
+                    tooltipEl.innerHTML = `
+                        <div style="font-weight:800; color:#93c5fd;">${shortName} (${fullName})</div>
+                        <div style="margin-top:2px;">${yr}년 · <b>${val}억원</b> (${share}%)</div>
+                    `;
+                    tooltipEl.style.display = 'block';
+                    tooltipEl.style.left = `${Math.min(window.innerWidth - 190, clientX + 14)}px`;
+                    tooltipEl.style.top = `${Math.max(12, clientY - 46)}px`;
+                };
+
+                seg.addEventListener('mouseenter', (e) => showTip(e.clientX, e.clientY));
+                seg.addEventListener('mousemove', (e) => showTip(e.clientX, e.clientY));
+                seg.addEventListener('mouseleave', () => {
+                    tooltipEl.style.display = 'none';
+                });
+
+                // 모바일 터치 시 오터치 방지용 2단계 큰 버튼 표시
+                seg.addEventListener('touchstart', (e) => {
+                    const touch = e.touches[0];
+                    if (touch) showTip(touch.clientX, touch.clientY);
+                    const regId = seg.getAttribute('data-reg-id');
+                    const fullName = seg.getAttribute('data-reg-name');
+                    const yr = seg.getAttribute('data-year');
+                    const val = Number(seg.getAttribute('data-val')).toLocaleString();
+
+                    if (mobilePanel) {
+                        mobilePanel.classList.remove('hidden');
+                        mobilePanel.innerHTML = `
+                            <div class="text-xs font-bold text-slate-800">
+                                선택됨: <span class="text-blue-800">${fullName}</span> (${yr}년 · ${val}억원)
+                            </div>
+                            <button type="button" id="js-mobile-go-reg" class="px-3.5 py-2 rounded-xl bg-blue-700 text-white text-xs font-bold shrink-0">
+                                이 지역 상세보기 →
+                            </button>
+                        `;
+                        const goBtn = document.getElementById('js-mobile-go-reg');
+                        if (goBtn) {
+                            goBtn.addEventListener('click', () => {
+                                tooltipEl.style.display = 'none';
+                                state.selectedRegionId = regId;
+                                state.selectedYear = Number(yr);
+                                const yrSel = document.getElementById('js-year-select');
+                                if (yrSel) yrSel.value = String(yr);
+                                renderAll();
+                            });
+                        }
+                    }
+                }, { passive: true });
+
+                // PC 클릭 시 즉시 해당 지자체로 이동
+                seg.addEventListener('click', () => {
+                    tooltipEl.style.display = 'none';
+                    state.selectedRegionId = seg.getAttribute('data-reg-id');
+                    renderAll();
+                });
+            });
+
+            svgEl.addEventListener('mouseleave', () => {
+                tooltipEl.style.display = 'none';
+            });
+        }
+    }
+
     // =========================================================================
     // 8-2. '어디에 어떻게 썼나?' 행정분야별 지출 구조 & 대표 사업 차트
     // =========================================================================
