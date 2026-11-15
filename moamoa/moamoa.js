@@ -1268,6 +1268,13 @@
     // =========================================================================
     // 10. 전체 화면 동기화 및 실행
     // =========================================================================
+    function showFatalError(err) {
+        const box = document.createElement('div');
+        box.style.cssText = 'position:fixed;top:16px;left:16px;right:16px;z-index:99999;background:#fef2f2;color:#991b1b;border:2px solid #ef4444;border-radius:12px;padding:16px;font-family:sans-serif;font-size:14px;';
+        box.innerHTML = `<b>[실행 오류 감지]</b> ${escapeHtml(err && err.message ? err.message : String(err))}`;
+        (document.body || document.documentElement).appendChild(box);
+    }
+
     function renderAll() {
         renderRegionBarAndSummary();
         renderMapMarkers();
@@ -1277,11 +1284,23 @@
     }
 
     async function bootstrap() {
-        await loadExternalAssets();
-        buildAppShell();
-        initLeafletMap();
-        renderAll();
+        try {
+            if (!document.body) {
+                await new Promise(r => window.addEventListener('DOMContentLoaded', r, { once: true }));
+            }
+            await loadExternalAssets();
+            buildAppShell();
+            initLeafletMap();
+            renderAll();
+        } catch (err) {
+            console.error(err);
+            showFatalError(err);
+        }
     }
+
+    window.addEventListener('error', (e) => {
+        if (e && e.error) showFatalError(e.error);
+    });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', bootstrap);
