@@ -134,7 +134,49 @@
 
         for (let i = 0; i < itemCount; i++) {
             const cat = CATEGORIES[(seedNum + year + i) % CATEGORIES.length];
-        // 2014 ~ 현재연도 전체 데이터 사전 생성 (2026년부터는 광주전남특별시 기준 생성)
+            const templates = PROJECT_TEMPLATES[cat];
+            const title = templates[(i + year) % templates.length];
+            const vendor = VENDORS[(seedNum * 3 + i + year) % VENDORS.length];
+
+            const month = String(((i * 3 + year) % 12) + 1).padStart(2, '0');
+            const day = String(((i * 7 + seedNum) % 28) + 1).padStart(2, '0');
+
+            let amountManWon;
+            if (i === itemCount - 1) {
+                amountManWon = Math.max(1200, remainingExecutedManWon);
+            } else {
+                const weight = ((i % 5) + 1) / (itemCount * 2.6);
+                amountManWon = Math.max(1500, Math.round(totalExecuted * 10000 * weight));
+                remainingExecutedManWon = Math.max(1200, remainingExecutedManWon - amountManWon);
+            }
+
+            items.push({
+                id: `${year}-${region.id}-${String(i + 1).padStart(4, '0')}`,
+                year,
+                regionId: region.id,
+                regionName: region.name,
+                regionShort: region.shortName,
+                category: cat,
+                projectName: `[${year}] ${region.shortName} ${title}`,
+                vendor,
+                amountManWon,
+                date: `${year}-${month}-${day}`
+            });
+        }
+
+        return {
+            regionId: region.id,
+            regionName: region.name,
+            regionShort: region.shortName,
+            year,
+            totalBudget,
+            totalExecuted,
+            execRate: Math.round(execRate * 1000) / 10,
+            items
+        };
+    }
+
+    // 2014 ~ 현재연도 전체 데이터 사전 생성 (2026년부터는 광주전남특별시 기준 생성)
     const ALL_YEARS_DATA = {};
     YEARS.forEach(yr => {
         ALL_YEARS_DATA[yr] = {};
