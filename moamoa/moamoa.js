@@ -214,8 +214,7 @@
         }).sort((a, b) => b.sumManWon - a.sumManWon);
 
         const topProjects = [...targetItems]
-            .sort((a, b) => b.amountManWon - a.amountManWon)
-            .slice(0, 3);
+            .sort((a, b) => b.amountManWon - a.amountManWon);
 
         return {
             totalManWon,
@@ -536,36 +535,18 @@
             }
         });
 
-        vworldLayer.addTo(mapInstance);
-        markersLayer = L.layerGroup().addTo(mapInstance);
-
-        setTimeout(() => mapInstance.invalidateSize(), 150);
-        window.addEventListener('resize', () => mapInstance && mapInstance.invalidateSize());
-    }
-
-    function renderMapMarkers() {
-        document.getElementById('js-map-title').textContent = `전국 지방재정 현황 지도 (${state.selectedYear}년)`;
-        const resetBtn = document.getElementById('js-reset-region-btn');
-        const insightCard = document.getElementById('js-map-insight-card');
-
-        if (state.selectedRegionId !== 'ALL') {
-            resetBtn.classList.remove('hidden');
-        } else {
-            resetBtn.classList.add('hidden');
-        }
-
-        // 지도 위 즉석 브리핑 카드 갱신 (어디에·어떻게 썼는지 바로 시각화)
+        // 지도 위 즉석 브리핑 카드 갱신 (어디에·어떻게 썼는지 전체 분야 및 사업 상세 표시)
         if (insightCard) {
             const breakdown = getCategoryBreakdown(state.selectedYear, state.selectedRegionId);
             const selectedReg = ALL_REGION_DEFS.find(r => r.id === state.selectedRegionId);
             const scopeName = selectedReg ? selectedReg.name : `전국 통합 (${state.selectedYear}년)`;
-            const top3Cats = breakdown.byCat.slice(0, 3);
+            const topCat = breakdown.byCat[0];
 
             insightCard.classList.remove('hidden');
             insightCard.innerHTML = `
                 <div class="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
                     <div>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">지출 사용처 브리핑</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">지출 사용처 전체 상세</span>
                         <h3 class="text-sm font-extrabold text-slate-900 mt-1">${scopeName}</h3>
                     </div>
                     <div class="text-right">
@@ -574,45 +555,63 @@
                     </div>
                 </div>
 
-                <!-- 어디에 썼나? (분야별 누적 바) -->
+                <!-- 1. 어디에 얼마 썼나? (6대 분야 전체 비중 및 금액) -->
                 <div class="mt-2.5">
                     <div class="flex items-center justify-between text-[11px] font-bold text-slate-700 mb-1">
-                        <span>1. 어디에 썼나? (분야별 비중)</span>
-                        <span class="text-blue-700">1위 ${top3Cats[0]?.category} (${top3Cats[0]?.share}%)</span>
+                        <span>1. 어디에 얼마 썼나? (전체 6대 분야)</span>
+                        <span class="text-blue-700">1위 ${topCat?.category} (${topCat?.share}%)</span>
                     </div>
                     <div class="w-full h-3 rounded-full overflow-hidden flex bg-slate-100">
                         ${breakdown.byCat.map(c => `
                             <div style="width:${c.share}%; background-color:${c.color};" title="${c.category}: ${c.eok}억원 (${c.share}%)"></div>
                         `).join('')}
                     </div>
-                    <div class="grid grid-cols-3 gap-1.5 mt-2">
-                        ${top3Cats.map(c => `
-                            <div class="bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-100">
-                                <div class="flex items-center gap-1 text-[10px] font-bold text-slate-600 truncate">
-                                    <span class="w-2 h-2 rounded-full shrink-0" style="background:${c.color};"></span>
-                                    <span class="truncate">${c.category}</span>
+                    <div class="grid grid-cols-2 gap-1.5 mt-2">
+                        ${breakdown.byCat.map(c => `
+                            <button type="button" data-map-cat="${c.category}" class="js-map-cat-btn text-left bg-slate-50 hover:bg-blue-50 rounded-lg px-2 py-1.5 border ${state.selectedCategory === c.category ? 'border-blue-600 bg-blue-50' : 'border-slate-100'} transition">
+                                <div class="flex items-center justify-between text-[10px] font-bold text-slate-600">
+                                    <span class="flex items-center gap-1 truncate">
+                                        <span class="w-2 h-2 rounded-full shrink-0" style="background:${c.color};"></span>
+                                        <span class="truncate">${c.category}</span>
+                                    </span>
+                                    <span class="text-slate-400 shrink-0">${c.count}건</span>
                                 </div>
-                                <div class="text-xs font-extrabold text-slate-900 mt-0.5">${c.eok}억 <span class="text-[10px] font-normal text-slate-500">(${c.share}%)</span></div>
-                            </div>
+                                <div class="text-xs font-extrabold text-slate-900 mt-0.5">${c.eok.toLocaleString()}억 <span class="text-[10px] font-normal text-slate-500">(${c.share}%)</span></div>
+                            </button>
                         `).join('')}
                     </div>
                 </div>
 
-                <!-- 어떻게 썼나? (핵심 지출 사업 TOP 3) -->
+                <!-- 2. 어떻게 썼나? (집행 사업 전체 스크롤 목록) -->
                 <div class="mt-3 pt-2.5 border-t border-slate-100">
-                    <div class="text-[11px] font-bold text-slate-700 mb-1.5">2. 어떻게 썼나? (최대 집행 사업 TOP 3)</div>
-                    <div class="space-y-1.5">
+                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-700 mb-1.5">
+                        <span>2. 어떻게 썼나? (집행 사업 전체 ${breakdown.topProjects.length}건)</span>
+                        <span class="text-[10px] text-slate-400">금액순</span>
+                    </div>
+                    <div class="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
                         ${breakdown.topProjects.map((p, idx) => `
-                            <div class="flex items-center justify-between gap-2 text-[11px] bg-slate-50/80 px-2.5 py-1.5 rounded-lg">
+                            <div class="flex items-center justify-between gap-2 text-[11px] bg-slate-50/90 px-2.5 py-1.5 rounded-lg border border-slate-100">
                                 <div class="truncate text-slate-800 font-medium">
-                                    <span class="font-extrabold text-blue-800 mr-1">${idx + 1}.</span>${escapeHtml(p.projectName.replace(/^\[\d+\]\s*/, ''))}
+                                    <span class="font-extrabold text-blue-800 mr-1">${idx + 1}.</span><span class="text-[10px] text-slate-500 mr-1">[${p.category}]</span>${escapeHtml(p.projectName.replace(/^\[\d+\]\s*/, ''))}
                                 </div>
-                                <span class="shrink-0 font-bold text-slate-900">${formatManWon(p.amountManWon)}</span>
+                                <span class="shrink-0 font-bold text-emerald-700">${formatManWon(p.amountManWon)}</span>
                             </div>
                         `).join('')}
                     </div>
                 </div>
             `;
+
+            insightCard.querySelectorAll('.js-map-cat-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const cat = btn.getAttribute('data-map-cat');
+                    state.selectedCategory = (state.selectedCategory === cat) ? 'ALL' : cat;
+                    const catSelect = document.getElementById('js-category-select');
+                    if (catSelect) catSelect.value = state.selectedCategory;
+                    renderMapMarkers();
+                    renderCategoryChart();
+                    renderTable();
+                });
+            });
         }
 
         if (!mapInstance || !markersLayer) return;
@@ -1121,13 +1120,13 @@
                             </button>
                         `;
                     }).join('')}
-                </div>
-            </div>
-
-            <!-- 어떻게 썼나? 핵심 집행 사업 요약 -->
+            <!-- 어떻게 썼나? 핵심 집행 사업 전체 목록 -->
             <div class="mt-5 pt-4 border-t border-slate-100">
-                <div class="text-xs font-extrabold text-slate-800 mb-2">어떻게 썼나? 주요 집행 사업 TOP 3</div>
-                <div class="space-y-2">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-extrabold text-slate-800">어떻게 썼나? 집행 사업 전체 (${breakdown.topProjects.length}건)</span>
+                    <span class="text-[11px] text-slate-400">스크롤하여 전체 확인</span>
+                </div>
+                <div class="space-y-2 max-h-[240px] overflow-y-auto pr-1">
                     ${breakdown.topProjects.map((proj, idx) => `
                         <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 flex items-center justify-between gap-2">
                             <div class="min-w-0">
